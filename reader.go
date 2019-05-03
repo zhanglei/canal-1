@@ -101,7 +101,7 @@ func (rd *Reader) readTelnetMultiBulk() (v Value, n int, err error) {
 			if quote {
 				bline = append(bline, c)
 			} else {
-				values = append(values, Value{Typ: '$', Str: bline})
+				values = append(values, lazyValue('$', 0, bline, nil, false, false))
 				bline = nil
 			}
 		} else if c == '"' {
@@ -121,18 +121,18 @@ func (rd *Reader) readTelnetMultiBulk() (v Value, n int, err error) {
 		return NilValue, n, &ErrProtocol{Msg: "unbalanced quotes in request"}
 	}
 	if len(bline) > 0 {
-		values = append(values, Value{Typ: '$', Str: bline})
+		values = append(values, lazyValue('$', 0, bline, nil, false, false))
 	}
-	return Value{Typ: '*', ArrayV: values}, n, nil
+	return lazyValue('*', 0, nil, values, false, false), n, nil
 }
 
-func (rd *Reader) readSimpleValue(Typ byte) (val Value, n int, err error) {
+func (rd *Reader) readSimpleValue(typ byte) (val Value, n int, err error) {
 	var line []byte
 	line, n, err = rd.readLine()
 	if err != nil {
 		return NilValue, n, err
 	}
-	return Value{Typ: Type(Typ), Str: line}, n, nil
+	return lazyValue(Type(typ), 0, line, nil, false, false), n, nil
 }
 
 func (rd *Reader) readLine() (line []byte, n int, err error) {
@@ -162,7 +162,7 @@ func (rd *Reader) readBulkValue() (val Value, n int, err error) {
 		return NilValue, n, err
 	}
 	if l < 0 {
-		return Value{Typ: '$', Null: true}, n, nil
+		return lazyValue('$', 0, nil, nil, true, false), n, nil
 	}
 	if l > 512*1024*1024 {
 		return NilValue, n, &ErrProtocol{Msg: "invalid bulk length"}
@@ -176,7 +176,7 @@ func (rd *Reader) readBulkValue() (val Value, n int, err error) {
 	if b[l] != '\r' || b[l+1] != '\n' {
 		return NilValue, n, &ErrProtocol{Msg: "invalid bulk line ending"}
 	}
-	return Value{Typ: '$', Str: b[:l]}, n, nil
+	return lazyValue('$', 0, b[:l], nil, false, false), n, nil
 }
 
 func (rd *Reader) readArrayValue(multibulk bool) (val Value, n int, err error) {
@@ -194,7 +194,7 @@ func (rd *Reader) readArrayValue(multibulk bool) (val Value, n int, err error) {
 		return NilValue, n, err
 	}
 	if l < 0 {
-		return Value{Typ: '*', Null: true}, n, nil
+		return lazyValue('*', 0, nil, nil, true, false), n, nil
 	}
 	var aval Value
 	vals := make([]Value, l)
@@ -206,7 +206,7 @@ func (rd *Reader) readArrayValue(multibulk bool) (val Value, n int, err error) {
 		}
 		vals[i] = aval
 	}
-	return Value{Typ: '*', ArrayV: vals}, n, nil
+	return lazyValue('*', 0, nil, vals, false, false), n, nil
 }
 
 func (rd *Reader) readIntegerValue() (val Value, n int, err error) {
@@ -218,7 +218,7 @@ func (rd *Reader) readIntegerValue() (val Value, n int, err error) {
 		}
 		return NilValue, n, err
 	}
-	return Value{Typ: ':', IntegerV: l}, n, nil
+	return lazyValue('*', l, nil, nil, false, false), n, nil
 }
 
 func (rd *Reader) readInt() (x int, n int, err error) {
@@ -244,6 +244,6 @@ func (rd *Reader) readCRLF() (val Value, n int, err error) {
 	if err != nil {
 		return
 	}
-	val = Value{Typ: CRLF, Str: bs}
+	val = lazyValue(CRLF, 0, bs, nil, false, false)
 	return
 }

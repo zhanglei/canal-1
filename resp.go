@@ -7,6 +7,25 @@ import (
 	"io"
 	"strconv"
 	"strings"
+	"sync"
+)
+
+var (
+	valuesPool = sync.Pool{
+		New: func() interface{} {
+			return &Value{}
+		},
+	}
+	lazyValue = func(typ Type, integerv int, str []byte, arrayv []Value, null bool, rdb bool) Value {
+		value := valuesPool.Get().(*Value)
+		defer valuesPool.Put(value)
+		value.Typ = typ
+		value.Str = str
+		value.ArrayV = arrayv
+		value.Null = null
+		value.RDB = rdb
+		return *value
+	}
 )
 
 const bufsz = 4096
@@ -309,41 +328,43 @@ func AnyValue(v interface{}) Value {
 }
 
 // SimpleStringValue returns a RESP simple string. A simple string has no new lines. The carriage return and new line characters are replaced with spaces.
-func SimpleStringValue(s string) Value { return Value{Typ: '+', Str: []byte(formSingleLine(s))} }
+func SimpleStringValue(s string) Value {
+	return lazyValue('+', 0, []byte(formSingleLine(s)), nil, false, false)
+}
 
 // BytesValue returns a RESP bulk string. A bulk string can represent any data.
-func BytesValue(b []byte) Value { return Value{Typ: '$', Str: b} }
+func BytesValue(b []byte) Value { return lazyValue('$', 0, b, nil, false, false) }
 
 // StringValue returns a RESP bulk string. A bulk string can represent any data.
-func StringValue(s string) Value { return Value{Typ: '$', Str: []byte(s)} }
+func StringValue(s string) Value { return lazyValue('$', 0, []byte(s), nil, false, false) }
 
 // NullValue returns a RESP null bulk string.
-func NullValue() Value { return Value{Typ: '$', Null: true} }
+func NullValue() Value { return lazyValue('$', 0, nil, nil, true, false) }
 
 // ErrorValue returns a RESP error.
 func ErrorValue(err error) Value {
 	if err == nil {
-		return Value{Typ: '-'}
+		return lazyValue('-', 0, nil, nil, false, false)
 	}
-	return Value{Typ: '-', Str: []byte(err.Error())}
+	return lazyValue('-', 0, []byte(err.Error()), nil, false, false)
 }
 
 // IntegerValue returns a RESP integer.
-func IntegerValue(i int) Value { return Value{Typ: ':', IntegerV: i} }
+func IntegerValue(i int) Value { return lazyValue(':', i, nil, nil, false, false) }
 
 // BoolValue returns a RESP integer representation of a bool.
 func BoolValue(t bool) Value {
 	if t {
-		return Value{Typ: ':', IntegerV: 1}
+		return lazyValue(':', 1, nil, nil, false, false)
 	}
-	return Value{Typ: ':', IntegerV: 0}
+	return lazyValue(':', 0, nil, nil, false, false)
 }
 
 // FloatValue returns a RESP bulk string representation of a float.
 func FloatValue(f float64) Value { return StringValue(strconv.FormatFloat(f, 'f', -1, 64)) }
 
 // ArrayValue returns a RESP array.
-func ArrayValue(vals []Value) Value { return Value{Typ: '*', ArrayV: vals} }
+func ArrayValue(vals []Value) Value { return lazyValue('*', 0, nil, vals, false, false) }
 
 func formSingleLine(s string) string {
 	bs1 := []byte(s)
