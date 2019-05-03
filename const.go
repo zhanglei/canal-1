@@ -112,5 +112,8 @@ const (
 	rdbLpEncoding32BitStr     = 0xF0
 	rdbLpEncoding32BitStrMask = 0xFF
 
-	rdbLpEOF = 0xFF
+	rdbLpEOF                     = 0xFF
+	rdbStreamItemFlagNone        = 0        /* No special flags. */
+	rdbStreamItemFlagDeleted     = (1 << 0) /* Entry was deleted. Skip it. */
+	rdbStreamItemFlangSameFields = (1 << 1) /* Same fields as master entry. */
 )

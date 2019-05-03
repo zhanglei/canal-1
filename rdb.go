@@ -263,39 +263,183 @@ func (d *rdbDecode) readModule(key []byte, expiry int64) error {
 	return fmt.Errorf("Not supported load module %v", moduleid)
 }
 
+func (d *rdbDecode) readStreamID() ([]byte, error) {
+	entrys, err := d.readString()
+	if err != nil {
+		return nil, err
+	}
+	slb := newSliceBuffer(entrys)
+	ms, err := slb.Slice(8)
+	if err != nil {
+		return nil, err
+	}
+	seq, _ := slb.Slice(8)
+	if err != nil {
+		return nil, err
+	}
+	ID := []byte(fmt.Sprintf("%d-%d",
+		binary.BigEndian.Uint64(ms),
+		binary.BigEndian.Uint64(seq),
+	))
+
+	return ID, nil
+}
+
 func (d *rdbDecode) readStream(key []byte, expiry int64) error {
 	cardinality, _, err := d.readLength()
 	if err != nil {
 		return err
 	}
 	d.event.BeginStream(key, int64(cardinality), expiry)
+
+	data := make([]byte, 0)
+
 	for cardinality > 0 {
 		cardinality--
 
-		streamID, err := d.readString()
+		ID, err := d.readStreamID()
 		if err != nil {
 			return err
 		}
-		err = d.readListPack()
+
+		lpData, err := d.readString()
 		if err != nil {
 			return err
 		}
-		d.event.Xadd(key, streamID, []byte{})
+		listpack := newSliceBuffer(lpData)
+
+		// skip 4 byte
+		// total-bytes 4
+		_readListPack(listpack, 4) // total bytes
+		/*
+		 * Master entry
+		 * +-------+---------+------------+---------+--/--+---------+---------+-+
+		 * | count | deleted | num-fields | field_1 | field_2 | ... | field_N |0|
+		 * +-------+---------+------------+---------+--/--+---------+---------+-+
+		 */
+		// num-elements 2
+		_readListPack(listpack, 2)
+
+		// count
+		b, err := _readListPack(listpack, 2)
+		if err != nil {
+			return err
+		}
+		count := bytes2i64(b)
+
+		// deleted
+		b, err = _readListPack(listpack, 2)
+		if err != nil {
+			return err
+		}
+		deleted := bytes2i64(b)
+
+		// num_field
+		b, err = _readListPack(listpack, 2)
+		if err != nil {
+			return err
+		}
+		num_fields := bytes2i64(b)
+
+		tempFileds := make([][]byte, num_fields)
+		for i := uint64(0); i < num_fields; i++ {
+			b, err := _readListPack(listpack, 1)
+			if err != nil {
+				return err
+			}
+			tempFileds[i] = b
+		}
+		_readListPack(listpack, 2)
+
+		_, _, _ = count, deleted, num_fields
+		total := count + deleted
+		for total > 0 {
+			total--
+			flag, err := _readListPack(listpack, 2)
+			if err != nil {
+				return err
+			}
+			ms, _ := _readListPack(listpack, 2)
+			if err != nil {
+				return err
+			}
+			seq, _ := _readListPack(listpack, 2)
+			if err != nil {
+				return err
+			}
+			steamID := fmt.Sprintf("%d-%d", bytes2i64(ms), bytes2i64(seq))
+
+			flagInt, _ := int(bytes2i64(flag)), steamID
+
+			delete := false
+			if (flagInt & rdbStreamItemFlagNone) != 0 {
+				delete = false
+			}
+			_ = delete
+			if (flagInt & rdbStreamItemFlangSameFields) != 0 {
+				for i := 0; i < int(num_fields); i++ {
+					/*
+					* SAMEFIELD
+					* +-------+-/-+-------+--------+
+					* |value-1|...|value-N|lp-count|
+					* +-------+-/-+-------+--------+
+					 */
+					data = append(data, tempFileds[i]...)
+					data = append(data, ' ')
+					value, err := _readListPack(listpack, 2)
+					if err != nil {
+						return err
+					}
+					data = append(data, value...)
+					data = append(data, ' ')
+				}
+			} else {
+				/*
+				 * NONEFIELD
+				 * +----------+-------+-------+-/-+-------+-------+--------+
+				 * |num-fields|field-1|value-1|...|field-N|value-N|lp-count|
+				 * +----------+-------+-------+-/-+-------+-------+--------+
+				 */
+				_numfields, err := _readListPack(listpack, 2)
+				if err != nil {
+					return err
+				}
+				for i := uint64(0); i < bytes2i64(_numfields); i++ {
+					field, err := _readListPack(listpack, 1)
+					if err != nil {
+						return err
+					}
+					data = append(data, field...)
+					data = append(data, ' ')
+
+					value, err := _readListPack(listpack, 2)
+					if err != nil {
+						return err
+					}
+					data = append(data, value...)
+					data = append(data, ' ')
+
+				}
+			}
+			d.event.Xadd(key, ID, data)
+			_readListPack(listpack, 2) // lp-count
+		}
+		eb, err := listpack.ReadByte() // lp-end
+		if err != nil {
+			return err
+		}
+		if eb != rdbLpEOF {
+			return errors.Errorf("rdb Lp eof unexpected.")
+		}
+
 	}
-	var length, lastIDms, lastIDseq uint64
-	length, _, err = d.readLength()
-	if err != nil {
-		return err
+
+	for i := 0; i < 3; i++ {
+		_, _, err = d.readLength() // items , last_id, last_seq
+		if err != nil {
+			return err
+		}
 	}
-	lastIDms, _, err = d.readLength()
-	if err != nil {
-		return err
-	}
-	lastIDseq, _, err = d.readLength()
-	if err != nil {
-		return err
-	}
-	_, _, _ = length, lastIDms, lastIDseq
 
 	//TODO output consumer groups
 	var groupsCount uint64
@@ -305,33 +449,29 @@ func (d *rdbDecode) readStream(key []byte, expiry int64) error {
 	}
 	for groupsCount > 0 {
 		groupsCount--
-		name, err := d.readString()
+		cgname, err := d.readString()
 		if err != nil {
 			return err
 		}
 		gIDms, _, _ := d.readLength()
 		gIDseq, _, _ := d.readLength()
-		_, _, _ = name, gIDms, gIDseq
+		fmt.Printf("cgname=%s last_cg_entry_id %d-%d\n", cgname, gIDms, gIDseq)
 
 		pelSize, _, _ := d.readLength()
 		for pelSize > 0 {
 			pelSize--
-			d.readUint64()
-			rawid := make([]byte, 16)
-			io.ReadFull(d.r, rawid)
-			d.readUint64()
-			d.readLength()
+			eid := make([]byte, 16) //deliveryTime 8 byte deliveryCount 8 byte
+			io.ReadFull(d.r, eid)
 		}
+
 		consumersNum, _, _ := d.readLength()
 		for consumersNum > 0 {
 			consumersNum--
-			d.readString()
-			d.readUint64()
-			pelSize, _, _ := d.readLength()
+			d.readString()                  // cname
+			pelSize, _, _ := d.readLength() // pending
 			for pelSize > 0 {
 				pelSize--
-				d.readUint64()
-				rawid := make([]byte, 16)
+				rawid := make([]byte, 16) //eid
 				io.ReadFull(d.r, rawid)
 			}
 		}
@@ -438,80 +578,80 @@ func readZipmapItemLength(buf *sliceBuffer, readFree bool) (int, int, error) {
 	return int(b), int(free), err
 }
 
-func (d *rdbDecode) readListPack() error {
-	listpack, err := d.readString()
+func _readListPack(buf *sliceBuffer, length int) ([]byte, error) {
+	b, err := buf.Slice(length)
 	if err != nil {
-		return err
+		return nil, err
 	}
-	buf := newSliceBuffer(listpack)
-	buf.Slice(4) // total bytes
-	numElements, _ := buf.Slice(2)
-	num := int64(binary.LittleEndian.Uint16(numElements))
+	bs, err := lpGet(b, buf)
 	if err != nil {
-		return err
+		return nil, err
 	}
-	for {
-		num--
-		b, _ := buf.Slice(1)
-		if b[0] == byte(rdbLpEOF) {
-			break
-		}
-		lpGet(b, buf)
-	}
-	return nil
+	return bs, nil
 }
 
-func lpGet(b []byte, buf *sliceBuffer) {
-	var val int64
-	var uval, negBegin, negmax uint64
-	fmt.Println(b[0], lpEncodingIs7BitUint(b[0]))
+func lpGet(b []byte, buf *sliceBuffer) ([]byte, error) {
+	var vals []byte
+
+	var uval, negstart, negmax uint64
 	if lpEncodingIs7BitUint(b[0]) {
-		fmt.Println("lpEncodingIs7BitUint")
-		negBegin = math.MaxUint64
+		negstart = math.MaxUint64
 		negmax = 0
 		uval = uint64(b[0] & 0x7F)
+
 	} else if lpEncodingIs6BitStr(b[0]) {
-		fmt.Println("lpEncodingIs6BitStr")
 		len := lpEncoding6BitStrLen(b)
-		str, _ := buf.Slice(int(len))
-		fmt.Println(string(str))
+		str, err := buf.Slice(int(len))
+		if err != nil {
+			return nil, err
+		}
+		return str, nil
+
 	} else if lpEncodingIs13BitInt(b[0]) {
-		fmt.Println("lpEncodingIs13BitInt")
-		tmp, _ := buf.Slice(1)
+		tmp, err := buf.Slice(1)
+		if err != nil {
+			return nil, err
+		}
 		b = append(b, tmp...)
 		uval = (uint64(b[0]&0x1f) << 8) | uint64(b[1])
-		negBegin = uint64(1) << 12
+		negstart = uint64(1) << 12
 		negmax = 8191
+
 	} else if lpEncodingIs16BitInt(b[0]) {
-		fmt.Println("lpEncodingIs16BitInt")
-		tmp, _ := buf.Slice(2)
+		tmp, err := buf.Slice(2)
+		if err != nil {
+			return nil, err
+		}
 		b = append(b, tmp...)
-		uval = uint64(b[1]) |
-			uint64(b[2])<<8
-		negBegin = uint64(1) << 15
+		uval = uint64(b[1]) | uint64(b[2])<<8
+		negstart = uint64(1) << 15
 		negmax = math.MaxUint16
+
 	} else if lpEncodingIs24BitInt(b[0]) {
-		fmt.Println("lpEncodingIs24BitInt")
-		tmp, _ := buf.Slice(3)
+		tmp, err := buf.Slice(3)
+		if err != nil {
+			return nil, err
+		}
 		b = append(b, tmp...)
-		uval = uint64(b[1]) |
-			uint64(b[2])<<8 |
-			uint64(b[3])<<16
-		negBegin = uint64(1) << 23
+		uval = uint64(b[1]) | uint64(b[2])<<8 | uint64(b[3])<<16
+		negstart = uint64(1) << 23
 		negmax = math.MaxUint32 >> 8
+
 	} else if lpEncodingIs32BitInt(b[0]) {
-		fmt.Println("lpEncodingIs32BitInt")
-		tmp, _ := buf.Slice(4)
+		tmp, err := buf.Slice(4)
+		if err != nil {
+			return nil, err
+		}
 		b = append(b, tmp...)
-		uval = uint64(b[1]) |
-			uint64(b[2])<<8 |
-			uint64(b[3])<<16 |
-			uint64(b[4])<<24
-		negBegin = uint64(1) << 31
+		uval = uint64(b[1]) | uint64(b[2])<<8 | uint64(b[3])<<16 | uint64(b[4])<<24
+		negstart = uint64(1) << 31
 		negmax = math.MaxUint32
+
 	} else if lpEncodingIs64BitInt(b[0]) {
-		fmt.Println("lpEncodingIs64BitInt")
-		tmp, _ := buf.Slice(8)
+		tmp, err := buf.Slice(8)
+		if err != nil {
+			return nil, err
+		}
 		b = append(b, tmp...)
 		uval = uint64(b[1]) |
 			uint64(b[2])<<8 |
@@ -521,34 +661,72 @@ func lpGet(b []byte, buf *sliceBuffer) {
 			uint64(b[6])<<40 |
 			uint64(b[7])<<48 |
 			uint64(b[8])<<56
-		negBegin = uint64(1) << 63
+		negstart = uint64(1) << 63
 		negmax = math.MaxUint64
+
 	} else if lpEncodingIs12BitStr(b[0]) {
-		tmp, _ := buf.Slice(1)
+		tmp, err := buf.Slice(1)
+		if err != nil {
+			return nil, err
+		}
 		b = append(b, tmp...)
 		len := lpEncoding12BitStrLen(b)
-		fmt.Println(len)
-		str, _ := buf.Slice(int(len))
-		fmt.Print(string(str))
+		str, err := buf.Slice(int(len))
+		if err != nil {
+			return nil, err
+		}
+		vals = str
+		return str, nil
+
 	} else if lpEncodingIs32BitStr(b[0]) {
-		tmp, _ := buf.Slice(4)
+		tmp, err := buf.Slice(4)
+		if err != nil {
+			return nil, err
+		}
 		b = append(b, tmp...)
 		len := lpEncoding32BitStrLen(b)
-		str, _ := buf.Slice(int(len))
-		fmt.Print(string(str))
+		str, err := buf.Slice(int(len))
+		if err != nil {
+			return nil, err
+		}
+		vals = str
+		return str, nil
+
 	} else {
 		uval = uint64(12345678900000000) + uint64(b[0])
-		negBegin = math.MaxUint64
+		negstart = math.MaxUint64
 		negmax = 0
 	}
 
-	if uval >= negBegin {
+	if uval >= negstart {
 		uval = negmax - uval
-		val = int64(uval)
-		val = -val - 1
+		vals = i642bytes(uval)
+		vals = i642bytes(bytes2i64(vals) - 1)
 	} else {
-		val = int64(uval)
+		vals = i642bytes(uval)
 	}
+	return vals, nil
+}
+
+func i642bytes(i uint64) []byte {
+	var buf = make([]byte, 8)
+	binary.BigEndian.PutUint64(buf, uint64(i))
+	return buf
+}
+func i322bytes(i uint32) []byte {
+	var buf = make([]byte, 8)
+	binary.BigEndian.PutUint32(buf, uint32(i))
+	return buf
+}
+
+func i162bytes(i uint16) []byte {
+	var buf = make([]byte, 8)
+	binary.BigEndian.PutUint16(buf, uint16(i))
+	return buf
+}
+
+func bytes2i64(buf []byte) uint64 {
+	return uint64(binary.BigEndian.Uint64(buf))
 }
 
 func lpEncodingIs7BitUint(b byte) bool {
