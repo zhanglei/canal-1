@@ -134,7 +134,6 @@ func (d *rdbDecode) decode() error {
 			lruIdle = 0
 		}
 	}
-
 }
 
 func (d *rdbDecode) readObject(key []byte, typ ValueType, expiry int64) error {
@@ -792,15 +791,28 @@ func (d *rdbDecode) readIntset(key []byte, expiry int64) error {
 	return nil
 }
 
+func skipLine(r io.Reader) error {
+	br := bufio.NewReader(r)
+	_, _, err := br.ReadLine()
+	if err != nil {
+		return fmt.Errorf("rdb: invalid file format,skip bulk string error.")
+	}
+	return nil
+}
+
 func (d *rdbDecode) checkHeader() error {
+	err := skipLine(d.r)
+	if err != nil {
+		return err
+	}
 	header := make([]byte, 9)
-	_, err := io.ReadFull(d.r, header)
+	_, err = io.ReadFull(d.r, header)
 	if err != nil {
 		return err
 	}
 	ind := bytes.Index(header, []byte("R"))
 	if ind < 0 {
-		return fmt.Errorf("rdb: invalid file format,header no contain REDIS magic.")
+		return fmt.Errorf("rdb: invalid file format,header no contain REDIS magic %s.", header)
 	}
 	if ind > 0 {
 		tmp := make([]byte, ind)

@@ -122,8 +122,8 @@ func (c *C) Command(cmd *canal.Command) error {
 }
 
 func main() {
-	fromFile()
-	// fromClient()
+	// fromFile()
+	fromClient()
 }
 
 func fromClient() {

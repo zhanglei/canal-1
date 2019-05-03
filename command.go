@@ -25,9 +25,9 @@ func (c *Command) CommandName() string {
 }
 
 func (c *Command) Args() []interface{} {
-	args := make([]interface{}, len(c.D)-1)
+	args := make([]interface{}, len(c.D)-1, len(c.D)-1)
 	for i := range c.D[1:] {
-		args = append(args, c.D[i+1])
+		args[i] = c.D[i+1]
 	}
 	return args
 }
