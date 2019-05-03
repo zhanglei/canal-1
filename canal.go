@@ -4,31 +4,26 @@ import (
 	"bufio"
 	"fmt"
 	"io"
-	"log"
+	"strconv"
 	"strings"
-	"sync"
+	"sync/atomic"
 
 	"github.com/pkg/errors"
 )
 
-type CommandDecoder interface {
-	Command(cmd *Command) error
-}
-
 type Replica struct {
-	curDB int
-
 	r ByteReader
 
 	rdbEvent    Decoder
 	offsetEvent OffsetHandler
 	cmdEvent    CommandDecoder
-	wr          io.Writer
+
+	wr io.Writer
 }
 
 func NewReplica(r io.Reader, e Decoder, o OffsetHandler, c CommandDecoder) *Replica {
 	return &Replica{
-		0, bufio.NewReader(r), e, o, c, nil,
+		bufio.NewReader(r), e, o, c, nil,
 	}
 }
 
@@ -49,24 +44,22 @@ func (r *Replica) DumpAndParse() error {
 	resp := NewReader(r.r)
 	for {
 		val, n, err := resp.ReadValue()
-
-		log.Printf("current opcode %s length %d\n", val.String(), n)
+		if err != nil {
+			return err
+		}
 		if isMark {
 			r.offsetEvent.Increment(int64(n))
 		}
-
 		switch val.Type() {
 		case SimpleString:
 			if strings.HasPrefix(val.String(), "CONTINUE") {
 				isMark = true
 			}
-			log.Printf("recevice simple string %s\n", val.String())
 		case Error:
 			return errors.New(val.String())
 		case Integer:
 			continue
 		case BulkString:
-			log.Printf("recevice bulk string %s\n", val.String())
 			continue
 		case Array:
 			cmd, err := NewCommand(buildStrCommand(val.String())...)
@@ -82,11 +75,11 @@ func (r *Replica) DumpAndParse() error {
 			if err != nil {
 				return err
 			}
-			val, _, err = resp.ReadValue() // read crc64 check sum
+			// skip crc64 check sum
+			val, _, err = resp.ReadValue()
 			if err != nil {
 				return err
 			}
-			log.Printf("crc64=%d\n", Digest([]byte(val.String())))
 			isMark = true
 		case CRLF:
 			continue
@@ -100,9 +93,92 @@ func (r *Replica) DumpAndParse() error {
 }
 
 type Canal struct {
-	mu sync.Mutex
+	conn Conn
 
-	offset  int64
-	conn    Conn
 	replica *Replica
+
+	cmdEvent CommandDecoder
+
+	db     int
+	offset int64
 }
+
+func (c *Canal) set(n int64) {
+	atomic.StoreInt64(&c.offset, n)
+}
+
+func (c *Canal) Increment(n int64) {
+	atomic.AddInt64(&c.offset, n)
+}
+
+func (c *Canal) Offset() string {
+	return fmt.Sprintf("%d", atomic.LoadInt64(&c.offset))
+}
+
+func (c *Canal) BeginRDB() {}
+
+func (c *Canal) BeginDatabase(n int) {
+	c.db = n
+	cmd, _ := NewCommand("SELECT", fmt.Sprintf("%d", n))
+	c.cmdEvent.Command(cmd)
+}
+
+func (c *Canal) Aux(key, value []byte) {
+	if string(key) == "repl-offset" {
+		i, err := strconv.ParseInt(string(value), 10, 64)
+		if err != nil {
+			panic(err)
+		}
+		c.set(i)
+	}
+}
+
+func (c *Canal) ResizeDatabase(dbSize, expiresSize uint32) {}
+
+func (c *Canal) EndDatabase(n int) {}
+
+func (c *Canal) Set(key, value []byte, expiry int64) {
+	cmd, _ := NewCommand("SET", string(key), string(value))
+	c.cmdEvent.Command(cmd)
+}
+
+func (c *Canal) BeginHash(key []byte, length, expiry int64) {}
+
+func (c *Canal) Hset(key, field, value []byte) {
+	cmd, _ := NewCommand("HSET", string(key), string(field), string(value))
+	c.cmdEvent.Command(cmd)
+}
+func (c *Canal) EndHash(key []byte) {}
+
+func (c *Canal) BeginSet(key []byte, cardinality, expiry int64) {}
+
+func (c *Canal) Sadd(key, member []byte) {
+	cmd, _ := NewCommand("SADD", string(key), string(member))
+	c.cmdEvent.Command(cmd)
+}
+func (c *Canal) EndSet(key []byte) {}
+
+func (c *Canal) BeginList(key []byte, length, expiry int64) {}
+
+func (c *Canal) Rpush(key, value []byte) {
+	cmd, _ := NewCommand("RPUSH", string(key), string(value))
+	c.cmdEvent.Command(cmd)
+}
+func (c *Canal) EndList(key []byte) {}
+
+func (c *Canal) BeginZSet(key []byte, cardinality, expiry int64) {}
+
+func (c *Canal) Zadd(key []byte, score float64, member []byte) {
+	cmd, _ := NewCommand("ZADD", string(key), fmt.Sprintf("%f", score), string(member))
+	c.cmdEvent.Command(cmd)
+}
+func (c *Canal) EndZSet(key []byte) {}
+
+func (c *Canal) BeginStream(key []byte, cardinality, expiry int64) {}
+func (c *Canal) Xadd(key, id, listpack []byte) {
+	cmd, _ := NewCommand("XADD", string(key), string(id), string(listpack))
+	c.cmdEvent.Command(cmd)
+}
+func (c *Canal) EndStream(key []byte) {}
+
+func (c *Canal) EndRDB() {}

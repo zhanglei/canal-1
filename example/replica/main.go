@@ -94,7 +94,7 @@ func (d *nopE) BeginStream(key []byte, cardinality, expiry int64) {
 	d.t.Printf("BeginStream key=%s cardinality=%d expiry=%d db=%d.\n", key, cardinality, expiry, d.db)
 }
 func (d *nopE) Xadd(key, id, listpack []byte) {
-	d.t.Printf("Xadd key=%s id=%s listpack=%s db=%d.\n", key, id, listpack, d.db)
+	d.t.Printf("Xadd key=%s id=%q listpack=%s db=%d.\n", key, id, listpack, d.db)
 }
 func (d *nopE) EndStream(key []byte) {
 	d.t.Printf("EndStream key=%s db=%d.\n", key, d.db)

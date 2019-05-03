@@ -454,10 +454,9 @@ func (d *rdbDecode) readListPack() error {
 		num--
 		b, _ := buf.Slice(1)
 		if b[0] == byte(rdbLpEOF) {
-			fmt.Println("eof")
 			break
 		}
-		//lpGet(b, buf)
+		lpGet(b, buf)
 	}
 	return nil
 }
@@ -475,7 +474,7 @@ func lpGet(b []byte, buf *sliceBuffer) {
 		fmt.Println("lpEncodingIs6BitStr")
 		len := lpEncoding6BitStrLen(b)
 		str, _ := buf.Slice(int(len))
-		fmt.Print(string(str))
+		fmt.Println(string(str))
 	} else if lpEncodingIs13BitInt(b[0]) {
 		fmt.Println("lpEncodingIs13BitInt")
 		tmp, _ := buf.Slice(1)

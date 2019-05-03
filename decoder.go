@@ -15,6 +15,10 @@ type OffsetHandler interface {
 	Offset() string
 }
 
+type CommandDecoder interface {
+	Command(cmd *Command) error
+}
+
 // A Decodr must be implemented to parse a RDB io.Reader &  parse a command io.Reader
 type Decoder interface {
 	// BeginDatabase is called when database n Begins.
