@@ -1,11 +1,11 @@
 package main
 
 import (
-	"canal"
 	"fmt"
 	"log"
 	"net"
 	"os"
+	canal "redis-canal"
 	"strconv"
 	"sync/atomic"
 )
@@ -150,7 +150,7 @@ func fromClient() {
 }
 
 func fromFile() {
-	fd, err := os.Open("/Users/xiaopengdeng/Documents/workspace/go-project/src/canal/example/appendonly7001-1.aof")
+	fd, err := os.Open("/tmp/dump.rdb")
 	if err != nil {
 		panic(err)
 	}
