@@ -23,6 +23,8 @@ func (s *sliceBuffer) Slice(n int) ([]byte, error) {
 	return b, nil
 }
 
+func (s *sliceBuffer) Skip(n int) { s.Slice(n) }
+
 func (s *sliceBuffer) ReadByte() (byte, error) {
 	if s.i >= len(s.s) {
 		return 0, io.EOF
@@ -42,6 +44,15 @@ func (s *sliceBuffer) Read(b []byte) (int, error) {
 	n := copy(b, s.s[s.i:])
 	s.i += n
 	return n, nil
+}
+
+func (s *sliceBuffer) First(length int) ([]byte, error) {
+	buf := make([]byte, length)
+	if s.i >= len(s.s) {
+		return buf, io.EOF
+	}
+	copy(buf, s.s[s.i:])
+	return buf, nil
 }
 
 func (s *sliceBuffer) Seek(offset int64, whence int) (int64, error) {

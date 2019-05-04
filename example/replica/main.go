@@ -1,11 +1,11 @@
 package main
 
 import (
+	canal "canal"
 	"fmt"
 	"log"
 	"net"
 	"os"
-	canal "redis-canal"
 	"strconv"
 	"sync/atomic"
 )
@@ -122,7 +122,8 @@ func (c *C) Command(cmd *canal.Command) error {
 }
 
 func main() {
-	// fromFile()
+	fromFile()
+	println("------------------")
 	fromClient()
 }
 
@@ -152,7 +153,7 @@ func fromClient() {
 func fromFile() {
 	fd, err := os.Open("/tmp/dump.rdb")
 	if err != nil {
-		panic(err)
+		fmt.Println(err)
 	}
 	l := log.New(os.Stdout, "RDB: ", 0)
 	c := &C{}

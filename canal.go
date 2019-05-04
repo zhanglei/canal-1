@@ -32,7 +32,7 @@ func (r *Replica) SetWriter(w io.Writer) {
 }
 
 func (r *Replica) DumpFromFile() error {
-	err := DecodeStream(r.r, r.rdbEvent)
+	err := DecodeFile(r.r, r.rdbEvent)
 	if err != nil {
 		return err
 	}
