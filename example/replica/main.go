@@ -122,7 +122,7 @@ func (c *C) Command(cmd *canal.Command) error {
 }
 
 func main() {
-	fromFile()
+	// fromFile()
 	println("------------------")
 	fromClient()
 }
@@ -151,7 +151,7 @@ func fromClient() {
 }
 
 func fromFile() {
-	fd, err := os.Open("/tmp/dump.rdb")
+	fd, err := os.Open("/tmp/dump.aof")
 	if err != nil {
 		fmt.Println(err)
 	}

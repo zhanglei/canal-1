@@ -1,3 +1,4 @@
+// Thanks to github.com/cupcake/rdb for providing an early version of deocde
 package canal
 
 import (
@@ -55,7 +56,6 @@ func (d *rdbDecode) decode(file bool) error {
 	d.event.BeginRDB()
 	var db uint64
 	var expiry int64
-	//var lruClock int64
 	var lruIdle uint64
 	var lfuFreq int
 	firstDB := true
@@ -373,9 +373,9 @@ func (d *rdbDecode) readStream(key []byte, expiry int64) error {
 			if err != nil {
 				return err
 			}
-			// steamID := fmt.Sprintf("%d-%d", bytes2i64(ms), bytes2i64(seq))
+			steamID := fmt.Sprintf("%d-%d", bytes2i64(ms), bytes2i64(seq))
 
-			flagInt, _, _ := int(bytes2i64(flag)), ms, seq
+			flagInt, _, _, _ := int(bytes2i64(flag)), ms, seq, steamID
 
 			delete := false
 			if (flagInt & rdbStreamItemFlagNone) != 0 {
