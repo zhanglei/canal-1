@@ -373,7 +373,15 @@ func (d *rdbDecode) readStream(key []byte, expiry int64) error {
 			if err != nil {
 				return err
 			}
-			steamID := fmt.Sprintf("%d-%d", bytes2i64(ms), bytes2i64(seq))
+			_ms, err := readuInt(ms)
+			if err != nil {
+				return err
+			}
+			_seq, err := readuInt(seq)
+			if err != nil {
+				return err
+			}
+			steamID := fmt.Sprintf("%d-%d", _ms, _seq)
 
 			flagInt, _, _, _ := int(bytes2i64(flag)), ms, seq, steamID
 
@@ -410,7 +418,11 @@ func (d *rdbDecode) readStream(key []byte, expiry int64) error {
 				if err != nil {
 					return err
 				}
-				for i := uint64(0); i < bytes2i64(_numfields); i++ {
+				cnt, err := readuInt(_numfields)
+				if err != nil {
+					return err
+				}
+				for i := uint64(0); i < cnt; i++ {
 					field, err := readListPackV2(listpack)
 					if err != nil {
 						return err
@@ -626,6 +638,33 @@ func readZipmapItemLength(buf *sliceBuffer, readFree bool) (int, int, error) {
  *
  * <element-tot-len> : TBD
  */
+
+func readuInt(intBytes []byte) (uint64, error) {
+	if len(intBytes) == 3 {
+		intBytes = append([]byte{0}, intBytes...)
+	}
+	bytesBuffer := bytes.NewBuffer(intBytes)
+	switch len(intBytes) {
+	case 1:
+		var tmp uint8
+		err := binary.Read(bytesBuffer, binary.BigEndian, &tmp)
+		return uint64(tmp), err
+	case 2:
+		var tmp uint16
+		err := binary.Read(bytesBuffer, binary.BigEndian, &tmp)
+		return uint64(tmp), err
+	case 4:
+		var tmp uint32
+		err := binary.Read(bytesBuffer, binary.BigEndian, &tmp)
+		return uint64(tmp), err
+	case 8:
+		var tmp uint64
+		err := binary.Read(bytesBuffer, binary.BigEndian, &tmp)
+		return uint64(tmp), err
+	default:
+		return 0, fmt.Errorf("%s", "BytesToInt bytes lenth is invaild!")
+	}
+}
 func readListPackV2(slice *sliceBuffer) (value []byte, err error) {
 	var special byte
 	special, err = slice.ReadByte()

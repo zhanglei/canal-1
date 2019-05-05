@@ -46,7 +46,7 @@ type Decoder interface {
 	// Xadd will be called exactly length times before EndStream.
 	BeginStream(key []byte, cardinality, expiry int64)
 	// Xadd is called once for each id in a stream.
-	Xadd(key, entryID, listpack []byte)
+	Xadd(key, streamID, listpack []byte)
 	// EndHash is called when there are no more fields in a hash.
 	EndStream(key []byte)
 
