@@ -382,7 +382,7 @@ func (d *rdbDecode) readStream(key []byte, expiry int64) error {
 			if err != nil {
 				return err
 			}
-			epoch += _ms
+			_ms += epoch
 			_seq, err := readuInt(seq)
 			if err != nil {
 				return err
@@ -415,7 +415,7 @@ func (d *rdbDecode) readStream(key []byte, expiry int64) error {
 					data = append(data, value...)
 					data = append(data, ' ')
 				}
-				d.event.Xadd(key, []byte(fmt.Sprintf("%d-%d", epoch, _seq)), data[0:len(data)-1])
+				d.event.Xadd(key, []byte(fmt.Sprintf("%d-%d", _ms, _seq)), data[0:len(data)-1])
 				data = data[:0]
 			} else {
 				/*
@@ -448,7 +448,7 @@ func (d *rdbDecode) readStream(key []byte, expiry int64) error {
 					data = append(data, ' ')
 
 				}
-				d.event.Xadd(key, []byte(fmt.Sprintf("%d-%d", epoch, _seq)), data[0:len(data)-1])
+				d.event.Xadd(key, []byte(fmt.Sprintf("%d-%d", _ms, _seq)), data[0:len(data)-1])
 				data = data[:0]
 			}
 			readListPackV2(listpack) // lp-count

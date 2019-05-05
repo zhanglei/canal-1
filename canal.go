@@ -6,7 +6,9 @@ import (
 	"io"
 	"strconv"
 	"strings"
+	"sync"
 	"sync/atomic"
+	"time"
 
 	"github.com/pkg/errors"
 )
@@ -42,6 +44,7 @@ func (r *Replica) DumpFromFile() error {
 func (r *Replica) DumpAndParse() error {
 	isMark := false
 	resp := NewReader(r.r)
+	once := sync.Once{}
 	for {
 		val, n, err := resp.ReadValue()
 		if err != nil {
@@ -60,7 +63,10 @@ func (r *Replica) DumpAndParse() error {
 		case Integer:
 			continue
 		case BulkString:
-			continue
+			if strings.HasPrefix(val.String(), "PING") { // first ping lost 4 bit `*1\r\n`
+				r.offsetEvent.Increment(int64(4))
+			}
+
 		case Array:
 			cmd, err := NewCommand(buildStrCommand(val.String())...)
 			if err != nil {
@@ -76,7 +82,7 @@ func (r *Replica) DumpAndParse() error {
 				return err
 			}
 			// skip crc64 check sum
-			val, _, err = resp.ReadValue()
+			_, _, err = resp.ReadValue()
 			if err != nil {
 				return err
 			}
@@ -84,10 +90,25 @@ func (r *Replica) DumpAndParse() error {
 		case CRLF:
 			continue
 		default:
-			return errors.New("unknow opcode.")
+			return errors.Errorf("unknow opcode %v.", val)
 		}
-		ack := "*3\r\n$8\r\nREPLCONF\r\n$3\r\nACK\r\n$" + fmt.Sprintf("%d", len(r.offsetEvent.Offset())) + "\r\n" + r.offsetEvent.Offset() + "\r\n"
-		r.wr.Write([]byte(ack))
+
+		go func() {
+			secondDo := func() {
+				ticker := time.NewTicker(1 * time.Second)
+				for {
+					ack := "*3\r\n$8\r\nREPLCONF\r\n$3\r\nACK\r\n$" +
+						fmt.Sprintf("%d", len(r.offsetEvent.Offset())) +
+						"\r\n" +
+						r.offsetEvent.Offset() +
+						"\r\n"
+					r.wr.Write([]byte(ack))
+					<-ticker.C
+				}
+			}
+			once.Do(secondDo)
+		}()
+
 		_, _, _ = val, n, err
 	}
 }
