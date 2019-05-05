@@ -12,6 +12,10 @@ type Command struct {
 	D []string
 }
 
+func (c *Command) String() string {
+	return strings.Join(c.D, " ")
+}
+
 func (c *Command) Type() CommandType {
 	cmdType, exists := CommandTypeMap[c.D[0]]
 	if !exists {

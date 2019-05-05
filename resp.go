@@ -20,6 +20,7 @@ var (
 		value := valuesPool.Get().(*Value)
 		defer valuesPool.Put(value)
 		value.Typ = typ
+		value.IntegerV = integerv
 		value.Str = str
 		value.ArrayV = arrayv
 		value.Null = null

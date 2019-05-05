@@ -151,7 +151,7 @@ func fromClient() {
 }
 
 func fromFile() {
-	fd, err := os.Open("/tmp/dump.rdb")
+	fd, err := os.Open("/Users/xiaopengdeng/Downloads/prod/dump.rdb")
 	if err != nil {
 		fmt.Println(err)
 	}

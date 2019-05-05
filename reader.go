@@ -218,7 +218,7 @@ func (rd *Reader) readIntegerValue() (val Value, n int, err error) {
 		}
 		return NilValue, n, err
 	}
-	return lazyValue('*', l, nil, nil, false, false), n, nil
+	return lazyValue(':', l, nil, nil, false, false), n, nil
 }
 
 func (rd *Reader) readInt() (x int, n int, err error) {

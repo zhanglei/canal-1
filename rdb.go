@@ -370,11 +370,12 @@ func (d *rdbDecode) readStream(key []byte, expiry int64) error {
 			if err != nil {
 				return err
 			}
-			ms, err := readListPackV2(listpack)
+			flagInt, err := readuInt(flag)
 			if err != nil {
 				return err
 			}
-			seq, err := readListPackV2(listpack)
+
+			ms, err := readListPackV2(listpack)
 			if err != nil {
 				return err
 			}
@@ -382,16 +383,18 @@ func (d *rdbDecode) readStream(key []byte, expiry int64) error {
 			if err != nil {
 				return err
 			}
-			_ms += epoch
+
+			seq, err := readListPackV2(listpack)
+			if err != nil {
+				return err
+			}
 			_seq, err := readuInt(seq)
 			if err != nil {
 				return err
 			}
-			flagInt, err := readuInt(flag)
-			if err != nil {
-				return err
-			}
-			_, _ = _ms, _seq
+
+			epoch += _ms
+			sequence += _seq
 
 			delete := false
 			if (int(flagInt) & rdbStreamItemFlagNone) != 0 {
@@ -405,6 +408,7 @@ func (d *rdbDecode) readStream(key []byte, expiry int64) error {
 				* |value-1|...|value-N|lp-count|
 				* +-------+-/-+-------+--------+
 				 */
+
 				for i := 0; i < int(num_fields); i++ {
 					data = append(data, tempFileds[i]...)
 					data = append(data, ' ')
@@ -415,7 +419,7 @@ func (d *rdbDecode) readStream(key []byte, expiry int64) error {
 					data = append(data, value...)
 					data = append(data, ' ')
 				}
-				d.event.Xadd(key, []byte(fmt.Sprintf("%d-%d", _ms, _seq)), data[0:len(data)-1])
+				d.event.Xadd(key, []byte(fmt.Sprintf("%d-%d", epoch, sequence)), data[0:len(data)-1])
 				data = data[:0]
 			} else {
 				/*
@@ -448,7 +452,7 @@ func (d *rdbDecode) readStream(key []byte, expiry int64) error {
 					data = append(data, ' ')
 
 				}
-				d.event.Xadd(key, []byte(fmt.Sprintf("%d-%d", _ms, _seq)), data[0:len(data)-1])
+				d.event.Xadd(key, []byte(fmt.Sprintf("%d-%d", epoch+_ms, sequence)), data[0:len(data)-1])
 				data = data[:0]
 			}
 			readListPackV2(listpack) // lp-count
@@ -651,32 +655,6 @@ func readZipmapItemLength(buf *sliceBuffer, readFree bool) (int, int, error) {
  * <element-tot-len> : TBD
  */
 
-func readuInt(intBytes []byte) (uint64, error) {
-	if len(intBytes) == 3 {
-		intBytes = append([]byte{0}, intBytes...)
-	}
-	bytesBuffer := bytes.NewBuffer(intBytes)
-	switch len(intBytes) {
-	case 1:
-		var tmp uint8
-		err := binary.Read(bytesBuffer, binary.BigEndian, &tmp)
-		return uint64(tmp), err
-	case 2:
-		var tmp uint16
-		err := binary.Read(bytesBuffer, binary.BigEndian, &tmp)
-		return uint64(tmp), err
-	case 4:
-		var tmp uint32
-		err := binary.Read(bytesBuffer, binary.BigEndian, &tmp)
-		return uint64(tmp), err
-	case 8:
-		var tmp uint64
-		err := binary.Read(bytesBuffer, binary.BigEndian, &tmp)
-		return uint64(tmp), err
-	default:
-		return 0, fmt.Errorf("%s", "BytesToInt bytes lenth is invaild!")
-	}
-}
 func readListPackV2(slice *sliceBuffer) (value []byte, err error) {
 	var special byte
 	if special, err = slice.ReadByte(); err != nil {
@@ -764,6 +742,33 @@ func readListPackV2(slice *sliceBuffer) (value []byte, err error) {
 	// <element-tot-len>
 
 	return value, nil
+}
+
+func readuInt(intBytes []byte) (uint64, error) {
+	if len(intBytes) == 3 {
+		intBytes = append([]byte{0}, intBytes...)
+	}
+	bytesBuffer := bytes.NewBuffer(intBytes)
+	switch len(intBytes) {
+	case 1:
+		var tmp uint8
+		err := binary.Read(bytesBuffer, binary.BigEndian, &tmp)
+		return uint64(tmp), err
+	case 2:
+		var tmp uint16
+		err := binary.Read(bytesBuffer, binary.BigEndian, &tmp)
+		return uint64(tmp), err
+	case 4:
+		var tmp uint32
+		err := binary.Read(bytesBuffer, binary.BigEndian, &tmp)
+		return uint64(tmp), err
+	case 8:
+		var tmp uint64
+		err := binary.Read(bytesBuffer, binary.BigEndian, &tmp)
+		return uint64(tmp), err
+	default:
+		return 0, fmt.Errorf("%s", "BytesToInt bytes lenth is invaild!")
+	}
 }
 
 func i642bytes(i uint64) []byte {
