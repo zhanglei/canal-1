@@ -268,26 +268,21 @@ func (d *rdbDecode) readModule(key []byte, expiry int64) error {
 	return fmt.Errorf("Not supported load module %v", moduleid)
 }
 
-func (d *rdbDecode) readStreamID() ([]byte, error) {
+func (d *rdbDecode) readStreamID() (uint64, uint64, error) {
 	entrys, err := d.readString()
 	if err != nil {
-		return nil, err
+		return 0, 0, err
 	}
 	slb := newSliceBuffer(entrys)
 	ms, err := slb.Slice(8)
 	if err != nil {
-		return nil, err
+		return 0, 0, err
 	}
 	seq, _ := slb.Slice(8)
 	if err != nil {
-		return nil, err
+		return 0, 0, err
 	}
-	ID := []byte(fmt.Sprintf("%d-%d",
-		binary.BigEndian.Uint64(ms),
-		binary.BigEndian.Uint64(seq),
-	))
-
-	return ID, nil
+	return binary.BigEndian.Uint64(ms), binary.BigEndian.Uint64(seq), nil
 }
 
 func (d *rdbDecode) readStream(key []byte, expiry int64) error {
@@ -302,11 +297,12 @@ func (d *rdbDecode) readStream(key []byte, expiry int64) error {
 	for cardinality > 0 {
 		cardinality--
 
-		ID, err := d.readStreamID()
+		epoch, sequence, err := d.readStreamID()
 		if err != nil {
 			return err
 		}
 
+		_ = sequence
 		lpData, err := d.readString()
 		if err != nil {
 			return err
@@ -331,21 +327,30 @@ func (d *rdbDecode) readStream(key []byte, expiry int64) error {
 		if err != nil {
 			return err
 		}
-		count := bytes2i64(b)
+		count, err := readuInt(b)
+		if err != nil {
+			return err
+		}
 
 		// deleted
 		b, err = readListPackV2(listpack)
 		if err != nil {
 			return err
 		}
-		deleted := bytes2i64(b)
+		deleted, err := readuInt(b)
+		if err != nil {
+			return err
+		}
 
 		// num_field
 		b, err = readListPackV2(listpack)
 		if err != nil {
 			return err
 		}
-		num_fields := bytes2i64(b)
+		num_fields, err := readuInt(b)
+		if err != nil {
+			return err
+		}
 
 		tempFileds := make([][]byte, num_fields)
 		for i := uint64(0); i < num_fields; i++ {
@@ -377,16 +382,19 @@ func (d *rdbDecode) readStream(key []byte, expiry int64) error {
 			if err != nil {
 				return err
 			}
+			epoch += _ms
 			_seq, err := readuInt(seq)
 			if err != nil {
 				return err
 			}
-			steamID := fmt.Sprintf("%d-%d", _ms, _seq)
-
-			flagInt, _, _, _ := int(bytes2i64(flag)), ms, seq, steamID
+			flagInt, err := readuInt(flag)
+			if err != nil {
+				return err
+			}
+			_, _ = _ms, _seq
 
 			delete := false
-			if (flagInt & rdbStreamItemFlagNone) != 0 {
+			if (int(flagInt) & rdbStreamItemFlagNone) != 0 {
 				delete = false
 			}
 			_ = delete
@@ -407,6 +415,8 @@ func (d *rdbDecode) readStream(key []byte, expiry int64) error {
 					data = append(data, value...)
 					data = append(data, ' ')
 				}
+				d.event.Xadd(key, []byte(fmt.Sprintf("%d-%d", epoch, _seq)), data[0:len(data)-1])
+				data = data[:0]
 			} else {
 				/*
 				 * NONEFIELD
@@ -438,10 +448,12 @@ func (d *rdbDecode) readStream(key []byte, expiry int64) error {
 					data = append(data, ' ')
 
 				}
+				d.event.Xadd(key, []byte(fmt.Sprintf("%d-%d", epoch, _seq)), data[0:len(data)-1])
+				data = data[:0]
 			}
-			d.event.Xadd(key, ID, data)
 			readListPackV2(listpack) // lp-count
 		}
+
 		eb, err := listpack.ReadByte() // lp-end
 		if err != nil {
 			return err
@@ -667,12 +679,9 @@ func readuInt(intBytes []byte) (uint64, error) {
 }
 func readListPackV2(slice *sliceBuffer) (value []byte, err error) {
 	var special byte
-	special, err = slice.ReadByte()
-	if err != nil {
+	if special, err = slice.ReadByte(); err != nil {
 		return nil, err
 	}
-
-	// skip := int64(0)
 	if (special & rdbLpEncoding7BitUintMask) == rdbLpEncoding7BitUint { // mask 128 -> 0xxx xxxx
 		slice.Skip(1)
 		value = i642bytes((uint64(special) & 0x7f)) //  0x7f 127
@@ -700,24 +709,28 @@ func readListPackV2(slice *sliceBuffer) (value []byte, err error) {
 			return nil, err
 		}
 		slice.Skip(3)
+
 	} else if (special & rdbLpEncoding24BitIntMask) == rdbLpEncoding24BitInt {
 		value, err = slice.First(3)
 		if err != nil {
 			return nil, err
 		}
 		slice.Skip(4)
+
 	} else if (special & rdbLpEncoding32BitIntMask) == rdbLpEncoding32BitInt {
 		value, err = slice.First(4)
 		if err != nil {
 			return nil, err
 		}
 		slice.Skip(5)
+
 	} else if (special & rdbLpEncoding64BitIntMask) == rdbLpEncoding64BitInt {
 		value, err = slice.First(8)
 		if err != nil {
 			return nil, err
 		}
 		slice.Skip(9)
+
 	} else if (special & rdbLpEncoding12BitStrMask) == rdbLpEncoding12BitStr {
 		b, err := slice.ReadByte()
 		if err != nil {
@@ -735,11 +748,16 @@ func readListPackV2(slice *sliceBuffer) (value []byte, err error) {
 		if err != nil {
 			return nil, err
 		}
-		value, err = slice.First(int(bytes2i64(len)))
+		realLength, err := readuInt(len)
 		if err != nil {
 			return nil, err
 		}
-		slice.Skip(5 + int(bytes2i64(len)))
+		value, err = slice.First(int(realLength))
+		if err != nil {
+			return nil, err
+		}
+		slice.Skip(5 + int(realLength))
+
 	} else {
 		return nil, errors.Errorf("Unsupported operation exception %q\n", special)
 	}
@@ -752,10 +770,6 @@ func i642bytes(i uint64) []byte {
 	var buf = make([]byte, 8)
 	binary.BigEndian.PutUint64(buf, uint64(i))
 	return buf
-}
-
-func bytes2i64(buf []byte) uint64 {
-	return uint64(binary.BigEndian.Uint64(buf))
 }
 
 func (d *rdbDecode) readZiplist(key []byte, expiry int64, addListEvents bool) error {
