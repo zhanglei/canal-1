@@ -36,7 +36,7 @@ func (r *replica) dumpFromFile() error {
 	return nil
 }
 
-func (r *replica) dumpAndParse(close chan struct{}) error {
+func (r *replica) dumpAndParse(close chan *replica) error {
 	isMark := false
 	resp := NewReader(r.r)
 	for {

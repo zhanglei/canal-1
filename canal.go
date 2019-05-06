@@ -1,6 +1,8 @@
 package canal
 
 import (
+	"bytes"
+	"fmt"
 	"net"
 	"sync"
 	"time"
@@ -30,15 +32,15 @@ type Canal struct {
 	offset int64
 
 	once   sync.Once
-	closeC chan struct{}
-	closeR chan struct{}
+	closeC chan *Canal
+	closeR chan *replica
 }
 
 func NewCanal(cfg *Config) (*Canal, error) {
 	c := new(Canal)
 	c.once = sync.Once{}
-	c.closeC = make(chan struct{})
-	c.closeR = make(chan struct{})
+	c.closeC = make(chan *Canal)
+	c.closeR = make(chan *replica)
 	c.cfg = cfg
 	err := c.prepare()
 	if err != nil {
@@ -61,9 +63,8 @@ func (c *Canal) Run(commandDecode CommandDecoder) error {
 }
 
 func (c *Canal) Close() {
-	close := struct{}{}
-	c.closeR <- close
-	c.closeC <- close
+	c.closeR <- c.replica
+	c.closeC <- c
 }
 
 func (c *Canal) prepare() error {
@@ -82,6 +83,7 @@ func (c *Canal) ack() {
 			for {
 				select {
 				case <-c.closeC:
+					fmt.Printf("[CANAL] shutdown.")
 					return
 				default:
 				}
@@ -94,40 +96,84 @@ func (c *Canal) ack() {
 	}()
 }
 
+func getAddr(conn net.Conn) (ip string, port string, err error) {
+	localAddr, ok := conn.LocalAddr().(*net.TCPAddr)
+	if !ok {
+		return "", "", errors.Errorf("connection is invalid ?")
+	}
+	return net.SplitHostPort(localAddr.String())
+}
+
 func (c *Canal) replconf() error {
-	// _, err := c.conn.Do("REPLCONF", "listening-port", "0")
-	// if err != nil {
-	// 	return err
-	// }
+	ip, port, err := getAddr(c.conn)
+	if err != nil {
+		return err
+	}
+	_rd := NewReader(c.conn)
 
-	// if _, err := c.conn.Do("REPLCONF", "ip-address", "172.17.0.1"); err != nil {
-	// 	return err
-	// }
+	listening_port, _ := MultiBulkBytes(MultiBulkValue("REPLCONF", "listening-port", port))
+	if _, err = c.conn.Write(listening_port); err != nil {
+		return err
+	}
+	reply, _, err := _rd.readLine()
+	if err != nil {
+		return err
+	}
+	if bytes.Contains(reply, []byte("OK")) {
+		fmt.Printf("[CANAL] replconf listening port success.\n")
+	} else {
+		fmt.Printf("[CANAL] replconf listening port failed.\n")
+	}
 
-	// if _, err := c.conn.Do("REPLCONF", "capa", "eof"); err != nil {
-	// 	return err
-	// }
+	ip_address, _ := MultiBulkBytes(MultiBulkValue("REPLCONF", "ip-address", ip))
+	if _, err = c.conn.Write(ip_address); err != nil {
+		return err
+	}
+	reply, _, err = _rd.readLine()
+	if err != nil {
+		return err
+	}
+	if bytes.Contains(reply, []byte("OK")) {
+		fmt.Printf("[CANAL] replconf ip address success.\n")
+	} else {
+		fmt.Printf("[CANAL] replconf ip address failed.\n")
+	}
 
-	// if _, err := c.conn.Do("REPLCONF", "capa", "psync2"); err != nil {
-	// 	return err
-	// }
+	capaEof, _ := MultiBulkBytes(MultiBulkValue("REPLCONF", "capa", "eof"))
+	if _, err = c.conn.Write(capaEof); err != nil {
+		return err
+	}
+	reply, _, err = _rd.readLine()
+	if err != nil {
+		return err
+	}
+	if bytes.Contains(reply, []byte("OK")) {
+		fmt.Printf("[CANAL] replconf capa model success.\n")
+	} else {
+		fmt.Printf("[CANAL] replconf capa model failed.\n")
+	}
+
+	capaMethod, _ := MultiBulkBytes(MultiBulkValue("REPLCONF", "capa", "psync2"))
+	if _, err = c.conn.Write(capaMethod); err != nil {
+		return err
+	}
+	reply, _, err = _rd.readLine()
+	if err != nil {
+		return err
+	}
+	if bytes.Contains(reply, []byte("OK")) {
+		fmt.Printf("[CANAL] replconf capa method success.\n")
+	} else {
+		fmt.Printf("[CANAL] replconf capa method failed.\n")
+	}
 
 	if c.runID == "" {
 		c.runID = "?"
 		c.offset = -1
 	}
 
-	// ack := "*3\r\n$5\r\npsync\r\n$" +
-	// 	fmt.Sprintf("%d", len(c.runID)) +
-	// 	"\r\n" +
-	// 	c.runID +
-	// 	"\r\n" +
-	// 	"$" + fmt.Sprintf("%d", len(c.Offset())) +
-	// 	"\r\n" +
-	// 	c.Offset() +
-	// 	"\r\n"
 	psync, _ := MultiBulkBytes(MultiBulkValue("psync", c.runID, c.Offset()))
-	_, err := c.conn.Write(psync)
+	_, err = c.conn.Write(psync)
 	if err != nil {
 		return err
 	}
