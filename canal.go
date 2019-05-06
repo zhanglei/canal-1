@@ -177,5 +177,8 @@ func (c *Canal) replconf() error {
 	if err != nil {
 		return err
 	}
+	// release conn handle
+	_rd = nil
+
 	return nil
 }
