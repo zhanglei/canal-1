@@ -2,7 +2,7 @@ package canal
 
 import (
 	"bytes"
-	"fmt"
+	"log"
 	"net"
 	"sync"
 	"time"
@@ -83,7 +83,7 @@ func (c *Canal) ack() {
 			for {
 				select {
 				case <-c.closeC:
-					fmt.Printf("[CANAL] shutdown.")
+					log.Printf("[CANAL] shutdown.")
 					return
 				default:
 				}
@@ -120,9 +120,9 @@ func (c *Canal) replconf() error {
 		return err
 	}
 	if bytes.Contains(reply, []byte("OK")) {
-		fmt.Printf("[CANAL] replconf listening port success.\n")
+		log.Printf("[CANAL] replconf listening port success.\n")
 	} else {
-		fmt.Printf("[CANAL] replconf listening port failed.\n")
+		log.Printf("[CANAL] replconf listening port failed.\n")
 	}
 
 	ip_address, _ := MultiBulkBytes(MultiBulkValue("REPLCONF", "ip-address", ip))
@@ -134,9 +134,9 @@ func (c *Canal) replconf() error {
 		return err
 	}
 	if bytes.Contains(reply, []byte("OK")) {
-		fmt.Printf("[CANAL] replconf ip address success.\n")
+		log.Printf("[CANAL] replconf ip address success.\n")
 	} else {
-		fmt.Printf("[CANAL] replconf ip address failed.\n")
+		log.Printf("[CANAL] replconf ip address failed.\n")
 	}
 
 	capaEof, _ := MultiBulkBytes(MultiBulkValue("REPLCONF", "capa", "eof"))
@@ -148,9 +148,9 @@ func (c *Canal) replconf() error {
 		return err
 	}
 	if bytes.Contains(reply, []byte("OK")) {
-		fmt.Printf("[CANAL] replconf capa model success.\n")
+		log.Printf("[CANAL] replconf capa model success.\n")
 	} else {
-		fmt.Printf("[CANAL] replconf capa model failed.\n")
+		log.Printf("[CANAL] replconf capa model failed.\n")
 	}
 
 	capaMethod, _ := MultiBulkBytes(MultiBulkValue("REPLCONF", "capa", "psync2"))
@@ -162,9 +162,9 @@ func (c *Canal) replconf() error {
 		return err
 	}
 	if bytes.Contains(reply, []byte("OK")) {
-		fmt.Printf("[CANAL] replconf capa method success.\n")
+		log.Printf("[CANAL] replconf capa method success.\n")
 	} else {
-		fmt.Printf("[CANAL] replconf capa method failed.\n")
+		log.Printf("[CANAL] replconf capa method failed.\n")
 	}
 
 	if c.runID == "" {
